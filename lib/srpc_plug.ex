@@ -7,108 +7,109 @@ defmodule SrpcPlug do
 
   alias :srpc_srv, as: Srpc
 
-  ##================================================================================================
+  ## ===============================================================================================
   ##
   ##  Initialize
   ##
-  ##================================================================================================
-  def init(%{srpc_handler: _, srpc_bypass: _} = opts) do
-    opts
+  ## ===============================================================================================
+  def init([]) do
+    unless Application.get_env(:srpc_srv, :srpc_handler) do
+      :erlang.error("Missing srpc_srv configuration for srpc_handler")
+    end
+
+    if srpc_bypass = Application.get_env(:srpc_srv, :srpc_bypass) || false do
+      IO.puts("\n  !!! WARNING: Bypassing SRPC Security !!!\n")
+    end
+
+    [srpc_bypass: srpc_bypass]
   end
 
-  def init(%{srpc_handler: _} = opts) do
-    opts
-    |> Map.put_new(:srpc_bypass, false)
-  end
-
-  def init(_) do
-    raise "SrpcPlug requires option value for :srpc_handler"
-  end
-
-  ##================================================================================================
+  ## ===============================================================================================
   ##
   ##  Process request
   ##
-  ##================================================================================================
-  ##------------------------------------------------------------------------------------------------
-  ##  Process SPRC POST to /
-  ##------------------------------------------------------------------------------------------------
-  def call(%{method: "POST", path_info: []} = conn, %{srpc_bypass: false,
-                                                      srpc_handler: srpc_handler}) do
+  ## ===============================================================================================
+  ## -----------------------------------------------------------------------------------------------
+  ##  Process SRPC POST to /
+  ## -----------------------------------------------------------------------------------------------
+  def call(%{method: "POST", path_info: []} = conn, srpc_bypass: false) do
     conn
     |> time_stamp(:srpc_start)
     |> read_body
     |> case do
-         {:ok, "", conn} ->
-           conn
-           |> respond({:error, "Empty body"})
-         {:ok, body, conn} ->
-           body
-           |> Srpc.parse_packet(srpc_handler)
-           |> process_srpc(srpc_handler, conn)
-         _ ->
-           conn
-       end
+      {:ok, "", conn} ->
+        conn
+        |> respond({:error, "Empty body"})
+
+      {:ok, body, conn} ->
+        body
+        |> Srpc.parse_packet()
+        |> process_srpc(conn)
+
+      _ ->
+        conn
+    end
   end
 
-  ##------------------------------------------------------------------------------------------------
-  ##  Decline process SPRC POST to /path
-  ##------------------------------------------------------------------------------------------------
-  def call(%{method: "POST"} = conn, %{srpc_bypass: false}) do
+  ## -----------------------------------------------------------------------------------------------
+  ##  Decline process SRPC POST to /path
+  ## -----------------------------------------------------------------------------------------------
+  def call(%{method: "POST"} = conn, srpc_bypass: false) do
     conn
     |> respond({:error, "Invalid path: Only SRPC POST to / accepted"})
   end
 
-  ##------------------------------------------------------------------------------------------------
-  ##  Decline process SPRC request to /path
-  ##------------------------------------------------------------------------------------------------
-  def call(conn, %{srpc_bypass: false}) do
+  ## -----------------------------------------------------------------------------------------------
+  ##  Decline process SRPC request to /path
+  ## -----------------------------------------------------------------------------------------------
+  def call(conn, srpc_bypass: false) do
     conn
     |> respond({:error, "Invalid request: Only SRPC POST to / accepted"})
   end
 
-  ##------------------------------------------------------------------------------------------------
+  ## -----------------------------------------------------------------------------------------------
   ##  Bypass SRPC
-  ##------------------------------------------------------------------------------------------------
-  def call(conn, %{srpc_bypass: true}) do
+  ## -----------------------------------------------------------------------------------------------
+  def call(conn, srpc_bypass: true) do
     conn
   end
 
-  ##================================================================================================
+  ## ===============================================================================================
   ##
   ##  Process SRPC packet
   ##
-  ##================================================================================================
-  ##------------------------------------------------------------------------------------------------
+  ## ===============================================================================================
+  ## -----------------------------------------------------------------------------------------------
   ##  Process lib exchange
-  ##------------------------------------------------------------------------------------------------
-  defp process_srpc({:lib_exchange, req_data}, srpc_handler, conn) do
-
+  ## -----------------------------------------------------------------------------------------------
+  defp process_srpc({:lib_exchange, req_data}, conn) do
     req_data
-    |> Srpc.lib_exchange(srpc_handler)
+    |> Srpc.lib_exchange()
     |> case do
-         {:ok, resp_data} ->
-           conn
-           |> assign(:req_type, :lib_exchange)
-           |> respond({:data, resp_data})
-         not_ok ->
-           conn
-           |> respond(not_ok)
-       end
+      {:ok, resp_data} ->
+        conn
+        |> assign(:req_type, :lib_exchange)
+        |> respond({:data, resp_data})
+
+      not_ok ->
+        conn
+        |> respond(not_ok)
+    end
   end
 
-  ##------------------------------------------------------------------------------------------------
+  ## -----------------------------------------------------------------------------------------------
   ##  Process srpc action
-  ##------------------------------------------------------------------------------------------------
-  defp process_srpc({:srpc_action, client_info, req_data}, srpc_handler, conn) do
+  ## -----------------------------------------------------------------------------------------------
+  defp process_srpc({:srpc_action, client_info, req_data}, conn) do
     conn
     |> assign(:req_type, :srpc_action)
     |> assign(:client_info, client_info)
 
-    case Srpc.srpc_action(client_info, req_data, srpc_handler) do
+    case Srpc.srpc_action(client_info, req_data) do
       {_srpc_action, {:invalid, _} = invalid} ->
         conn
         |> respond(invalid)
+
       {srpc_action, result} ->
         conn
         |> assign(:srpc_action, srpc_action)
@@ -116,60 +117,72 @@ defmodule SrpcPlug do
     end
   end
 
-  ##------------------------------------------------------------------------------------------------
+  ## -----------------------------------------------------------------------------------------------
   ##  Process invalid request
-  ##------------------------------------------------------------------------------------------------
-  defp process_srpc({:invalid, _} = invalid, _, conn), do: conn |> respond(invalid)
+  ## -----------------------------------------------------------------------------------------------
+  defp process_srpc({:invalid, _} = invalid, conn), do: conn |> respond(invalid)
 
-  ##------------------------------------------------------------------------------------------------
+  ## -----------------------------------------------------------------------------------------------
   ##  Process app request
-  ##------------------------------------------------------------------------------------------------
-  defp process_srpc({:app_request, client_info, data}, srpc_handler, conn) do
-    conn = conn
-    |> assign(:req_type, :app_request)
-    |> assign(:client_info, client_info)
+  ## -----------------------------------------------------------------------------------------------
+  defp process_srpc({:app_request, client_info, data}, conn) do
+    conn =
+      conn
+      |> assign(:req_type, :app_request)
+      |> assign(:client_info, client_info)
 
-    case Srpc.unwrap(client_info, data, srpc_handler) do
-      {:ok, {nonce, << app_map_len  :: size(16),
-                       app_map_data :: binary - size(app_map_len),
-                       app_body     :: binary >>}} ->
+    case Srpc.unwrap(client_info, data) do
+      {:ok,
+       {nonce,
+        <<app_map_len::size(16), app_map_data::binary-size(app_map_len), app_body::binary>>}} ->
         app_map_data
-        |> Poison.decode
+        |> Poison.decode()
         |> case do
-             {:ok, app_map} ->
-               conn
-               |> build_app_conn(app_map)
-               |> assign(:body, app_body)
-               |> assign(:nonce, nonce)
-               |> assign(:srpc_proxy, app_map["proxy"] || :undefined)
-               |> put_req_header("content-length", app_body |> byte_size |> Integer.to_string)
-               |> register_before_send(&post_process/1)
-             :error ->
-               conn
-               |> respond({:error, "Invalid app map in request packet"})
-           end
+           {:ok, app_map} ->
+            conn
+            |> build_app_conn(app_map)
+            |> assign(:body, app_body)
+            |> assign(:nonce, nonce)
+            |> assign(:srpc_proxy, app_map["proxy"] || :undefined)
+            |> put_req_header("content-length", app_body |> byte_size |> Integer.to_string())
+            |> register_before_send(&post_process/1)
+
+          :error ->
+            conn
+            |> respond({:error, "Invalid app map in request packet"})
+        end
+
       {:ok, _data} ->
         conn
         |> respond({:error, "Invalid data in request packet"})
+
       {:error, _} = error ->
         conn
         |> respond(error)
     end
   end
 
-  ##------------------------------------------------------------------------------------------------
+  ## -----------------------------------------------------------------------------------------------
   ##  Build app conn
-  ##------------------------------------------------------------------------------------------------
+  ## -----------------------------------------------------------------------------------------------
   defp build_app_conn(conn, app_map) do
-    conn = conn
-    |> delete_req_header("content-type")
+    conn =
+      conn
+      |> delete_req_header("content-type")
 
-    app_headers = for {k,v} <- Map.to_list(app_map["headers"]), do: {String.downcase(k), v}
+    app_headers =
+      case app_map["headers"] do
+        map when is_map(map) ->
+          for {k, v} <- Map.to_list(map), do: {String.downcase(k), v}
+        list ->
+          list
+      end
 
     %Plug.Conn{
       adapter: conn.adapter,
       assigns: conn.assigns,
       host: conn.host,
+      method: String.upcase(app_map["method"]),
       method: app_map["method"],
       owner: conn.owner,
       path_info: split_path(app_map["path"]),
@@ -183,11 +196,11 @@ defmodule SrpcPlug do
     }
   end
 
-  ##================================================================================================
+  ## ===============================================================================================
   ##
   ##  Post-process
   ##
-  ##================================================================================================
+  ## ===============================================================================================
   defp post_process(conn) do
     case conn.assigns[:req_type] do
       :app_request -> post_process_app_request(conn)
@@ -196,19 +209,20 @@ defmodule SrpcPlug do
   end
 
   defp post_process_app_request(conn) do
-    app_headers = List.foldl(conn.resp_headers, %{}, fn({k,v}, map) -> Map.put(map, k, v) end)
+    app_headers = List.foldl(conn.resp_headers, %{}, fn {k, v}, map -> Map.put(map, k, v) end)
 
-    nonce = case conn.assigns[:nonce] do
-              :undefined -> ""
-              value -> value
-            end
+    nonce =
+      case conn.assigns[:nonce] do
+        :undefined -> ""
+        value -> value
+      end
 
-    info_data = %{"respCode" => conn.status,
-                  "headers" => app_headers,
-                  "cookies" => conn.resp_cookies}
-    |> Poison.encode!
+    info_data =
+      %{"respCode" => conn.status, "headers" => app_headers, "cookies" => conn.resp_cookies}
+      |> Poison.encode!()
+
     info_len = byte_size(info_data)
-    packet = << info_len :: 16, info_data :: binary, conn.resp_body :: binary >>
+    packet = <<info_len::16, info_data::binary, conn.resp_body::binary>>
 
     client_info = conn.assigns[:client_info]
 
@@ -216,6 +230,7 @@ defmodule SrpcPlug do
       case Srpc.wrap(client_info, nonce, packet) do
         {:ok, body} ->
           {200, body}
+
         {:error, reason} ->
           assign(conn, :reason, reason)
           {400, reason}
@@ -236,11 +251,11 @@ defmodule SrpcPlug do
     }
   end
 
-  ##================================================================================================
+  ## ===============================================================================================
   ##
   ##  Responses
   ##
-  ##================================================================================================
+  ## ===============================================================================================
 
   # Convenience function. Some SRPC functions return successful processing as {:ok, data}.
   defp respond(conn, {:ok, data}), do: respond(conn, {:data, data})
@@ -248,7 +263,7 @@ defmodule SrpcPlug do
   defp respond(conn, {:data, body}) do
     conn
     |> resp_headers(:data)
-    |> put_resp_header("content-length", body |> byte_size |> Integer.to_string)
+    |> put_resp_header("content-length", body |> byte_size |> Integer.to_string())
     |> time_stamp(:srpc_end)
     |> send_resp(200, body)
     |> halt
@@ -266,7 +281,7 @@ defmodule SrpcPlug do
 
   defp respond(conn, {:invalid, reason}) do
     conn
-    |> assign(:reason, "Invalid Request: #{inspect reason}")
+    |> assign(:reason, "Invalid Request: #{inspect(reason)}")
     |> assign(:app_info, :undefined)
     |> assign(:srpc_action, :invalid)
     |> resp_headers(:text)
@@ -303,5 +318,4 @@ defmodule SrpcPlug do
     conn
     |> assign(marker, :erlang.monotonic_time(:micro_seconds))
   end
-
 end

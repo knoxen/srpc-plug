@@ -183,7 +183,6 @@ defmodule SrpcPlug do
       assigns: conn.assigns,
       host: conn.host,
       method: String.upcase(app_map["method"]),
-      method: app_map["method"],
       owner: conn.owner,
       path_info: split_path(app_map["path"]),
       peer: conn.peer,
@@ -234,6 +233,12 @@ defmodule SrpcPlug do
         {:error, reason} ->
           assign(conn, :reason, reason)
           {400, reason}
+
+        {:invalid, reason} ->
+          assign(conn, :reason, reason)
+          # {451, reason}
+          {403, reason}
+          
       end
 
     %Plug.Conn{

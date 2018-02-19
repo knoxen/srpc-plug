@@ -13,10 +13,6 @@ defmodule SrpcPlug do
   ##
   ## ===============================================================================================
   def init([]) do
-    unless Application.get_env(:srpc_srv, :srpc_handler) do
-      :erlang.error("Missing srpc_srv configuration for srpc_handler")
-    end
-
     if srpc_bypass = Application.get_env(:srpc_srv, :srpc_bypass) || false do
       IO.puts("\n  !!! WARNING: Bypassing SRPC Security !!!\n")
     end
@@ -33,6 +29,8 @@ defmodule SrpcPlug do
   ##  Process SRPC POST to /
   ## -----------------------------------------------------------------------------------------------
   def call(%{method: "POST", path_info: []} = conn, srpc_bypass: false) do
+    unless Application.get_env(:srpc_plug, :srpc_initialized), do: srpc_init()
+
     conn
     |> time_stamp(:srpc_start)
     |> read_body
@@ -138,7 +136,7 @@ defmodule SrpcPlug do
         app_map_data
         |> Poison.decode()
         |> case do
-           {:ok, app_map} ->
+          {:ok, app_map} ->
             conn
             |> build_app_conn(app_map)
             |> assign(:body, app_body)
@@ -174,6 +172,7 @@ defmodule SrpcPlug do
       case app_map["headers"] do
         map when is_map(map) ->
           for {k, v} <- Map.to_list(map), do: {String.downcase(k), v}
+
         list ->
           list
       end
@@ -238,7 +237,6 @@ defmodule SrpcPlug do
           assign(conn, :reason, reason)
           # {451, reason}
           {403, reason}
-          
       end
 
     %Plug.Conn{
@@ -322,5 +320,35 @@ defmodule SrpcPlug do
   defp time_stamp(conn, marker) do
     conn
     |> assign(marker, :erlang.monotonic_time(:micro_seconds))
+  end
+
+  ## ===============================================================================================
+  ##
+  ##  Private
+  ##
+  ## ===============================================================================================
+  ## -----------------------------------------------------------------------------------------------
+  ##  Return require configuration option or raise a fuss
+  ## -----------------------------------------------------------------------------------------------
+  defp required_opt(opt) do
+    unless value = Application.get_env(:srpc_plug, opt) do
+      raise SrpcPlug.Error, message: "SrpcPlug: Required configuration for #{opt} missing"
+    end
+
+    value
+  end
+
+  ## -----------------------------------------------------------------------------------------------
+  ##  Initialize SRPC libraries
+  ## -----------------------------------------------------------------------------------------------
+  defp srpc_init do
+    :ok =
+      required_opt(:srpc_file)
+      |> File.read!()
+      |> :srpc_lib.init()
+
+    Application.put_env(:srpc_srv, :srpc_handler, required_opt(:srpc_handler))
+
+    Application.put_env(:srpc_plug, :srpc_initialized, true)
   end
 end

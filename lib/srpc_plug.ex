@@ -116,11 +116,6 @@ defmodule SrpcPlug do
   end
 
   ## -----------------------------------------------------------------------------------------------
-  ##  Process invalid request
-  ## -----------------------------------------------------------------------------------------------
-  defp process_srpc({:invalid, _} = invalid, conn), do: conn |> respond(invalid)
-
-  ## -----------------------------------------------------------------------------------------------
   ##  Process app request
   ## -----------------------------------------------------------------------------------------------
   defp process_srpc({:app_request, client_info, data}, conn) do
@@ -154,11 +149,17 @@ defmodule SrpcPlug do
         conn
         |> respond({:error, "Invalid data in request packet"})
 
-      {:error, _} = error ->
+      not_ok ->
         conn
-        |> respond(error)
+        |> respond(not_ok)
+
     end
   end
+
+  ## -----------------------------------------------------------------------------------------------
+  ##  Process invalid and error requests
+  ## -----------------------------------------------------------------------------------------------
+  defp process_srpc(error, conn), do: conn |> respond(error)
 
   ## -----------------------------------------------------------------------------------------------
   ##  Build app conn

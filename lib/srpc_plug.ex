@@ -152,7 +152,6 @@ defmodule SrpcPlug do
       not_ok ->
         conn
         |> respond(not_ok)
-
     end
   end
 
@@ -241,7 +240,6 @@ defmodule SrpcPlug do
         {:demo, reason} ->
           assign(conn, :reason, reason)
           {451, reason}
-          
       end
 
     %Plug.Conn{

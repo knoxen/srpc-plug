@@ -159,7 +159,7 @@ defmodule SrpcPlug do
   ## -----------------------------------------------------------------------------------------------
   ##  Process invalid and error requests
   ## -----------------------------------------------------------------------------------------------
-  defp process_srpc(error, conn), do: conn |> respond(error)
+  defp process_srpc(not_ok, conn), do: conn |> respond(not_ok)
 
   ## -----------------------------------------------------------------------------------------------
   ##  Build app conn
@@ -236,8 +236,12 @@ defmodule SrpcPlug do
 
         {:invalid, reason} ->
           assign(conn, :reason, reason)
-          # {451, reason}
           {403, reason}
+
+        {:demo, reason} ->
+          assign(conn, :reason, reason)
+          {403, reason}
+          
       end
 
     %Plug.Conn{
